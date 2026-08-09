@@ -62,7 +62,7 @@ async fn process_directory(
     directory: &Path,
     archive_directory: &Path,
     client: &mut QbittorrentClient,
-    filters: &[Vec<String>],
+    filters: &[Filter],
 ) -> Result<()> {
     let mut entries = read_dir(directory).await?;
     while let Ok(Some(entry)) = entries.next_entry().await {
@@ -81,50 +81,15 @@ async fn process_file(
     path: &Path,
     archive_directory: &Path,
     client: &mut QbittorrentClient,
-    filters: &[Vec<String>],
+    filters: &[Filter],
 ) -> Result<()> {
     let file_name = path
         .file_name()
         .ok_or_else(|| anyhow!("No file name found in {}", path.display()))?;
 
     let content = read_to_string(path).await?;
-    let soup = Soup::new(&content);
-
-    let body = soup
-        .tag("body")
-        .find()
-        .ok_or_else(|| anyhow!("No body tag found in {}", path.display()))?;
     yield_now().await;
-
-    let magnet_links = body
-        .children()
-        .flat_map(|div| div.children())
-        .filter(|div_child| div_child.is_element())
-        .filter(|div_child| div_child.name() == "ul")
-        .flat_map(|ul| ul.children())
-        .filter(|ul_child| {
-            let text_nodes = ul_child
-                .children()
-                .filter(|child| child.is_text())
-                .map(|child| child.text())
-                .collect::<Vec<_>>();
-
-            filters.iter().any(|filter_set| {
-                filter_set
-                    .iter()
-                    .all(|term| text_nodes.iter().any(|text| text.contains(term)))
-            })
-        })
-        .filter(|ul_child| ul_child.is_element())
-        .filter(|ul_child| ul_child.name() == "li")
-        .flat_map(|li| li.children())
-        .flat_map(|li_child| li_child.children())
-        .flat_map(|li_grandchild| li_grandchild.children())
-        .filter(|grandchild| grandchild.is_element())
-        .filter(|grandchild| grandchild.name() == "a")
-        .map(|grandchild| grandchild.text())
-        .filter(|text| text.starts_with("magnet:"))
-        .collect::<Vec<_>>();
+    let magnet_links = extract_magnet_links(&content, filters);
 
     debug!(
         "found {} magnet links in {}",
@@ -227,6 +192,13 @@ fn init_config() -> Result<Configuration> {
 }
 
 #[derive(Debug, Deserialize)]
+struct Filter {
+    terms: Vec<String>,
+    #[serde(default)]
+    case_sensitive: bool,
+}
+
+#[derive(Debug, Deserialize)]
 struct Configuration {
     path: String,
     archive: ArchiveConfiguration,
@@ -234,7 +206,90 @@ struct Configuration {
     #[serde(default)]
     logging: Option<LoggingConfiguration>,
     #[serde(default)]
-    filters: Vec<Vec<String>>,
+    filters: Vec<Filter>,
+}
+
+fn extract_magnet_links(content: &str, filters: &[Filter]) -> Vec<String> {
+    let soup = Soup::new(content);
+
+    let body = match soup.tag("body").find() {
+        Some(body) => body,
+        None => return Vec::new(),
+    };
+
+    body.tag("ul")
+        .find_all()
+        .flat_map(|ul| ul.tag("li").find_all())
+        .filter(|li| {
+            let full_text = li.text();
+            filters.iter().any(|filter| {
+                filter.terms.iter().all(|term| {
+                    if filter.case_sensitive {
+                        full_text.contains(term)
+                    } else {
+                        full_text.to_lowercase().contains(&term.to_lowercase())
+                    }
+                })
+            })
+        })
+        .flat_map(|li| li.tag("a").find_all())
+        .map(|a| a.text())
+        .filter(|text| text.starts_with("magnet:"))
+        .collect::<Vec<_>>()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_filter_logic() {
+        let html = r#"
+            <html>
+                <body>
+                    <div>
+                        <ul>
+                            <li>
+                                <div><span>Hello c376</span></div>
+                                <div><div><div><a href="magnet:?xt=urn:btih:1">magnet:?xt=urn:btih:1</a></div></div></div>
+                            </li>
+                            <li>
+                                <div><span>hello C376</span></div>
+                                <div><div><div><a href="magnet:?xt=urn:btih:2">magnet:?xt=urn:btih:2</a></div></div></div>
+                            </li>
+                            <li>
+                                <div><span>World BO0</span></div>
+                                <div><div><div><a href="magnet:?xt=urn:btih:3">magnet:?xt=urn:btih:3</a></div></div></div>
+                            </li>
+                            <li>
+                                <div><span>world bo0</span></div>
+                                <div><div><div><a href="magnet:?xt=urn:btih:4">magnet:?xt=urn:btih:4</a></div></div></div>
+                            </li>
+                        </ul>
+                    </div>
+                </body>
+            </html>
+        "#;
+
+        let filters = vec![
+            Filter {
+                terms: vec!["Hello".to_string(), "c376".to_string()],
+                case_sensitive: false,
+            },
+            Filter {
+                terms: vec!["World".to_string(), "BO0".to_string()],
+                case_sensitive: true,
+            },
+        ];
+
+        let magnet_links = extract_magnet_links(html, &filters);
+
+        assert_eq!(magnet_links.len(), 3);
+        assert!(magnet_links.contains(&"magnet:?xt=urn:btih:1".to_string()));
+        assert!(magnet_links.contains(&"magnet:?xt=urn:btih:2".to_string()));
+        assert!(magnet_links.contains(&"magnet:?xt=urn:btih:3".to_string()));
+        assert!(!magnet_links.contains(&"magnet:?xt=urn:btih:4".to_string()));
+    }
 }
 
 #[derive(Debug, Deserialize)]
