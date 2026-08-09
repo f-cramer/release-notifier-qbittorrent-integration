@@ -1,0 +1,15 @@
+[package]
+name = "release-notifier-qbittorrent-integration"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0.104"
+config = "0.15.25"
+log = "0.4.33"
+log4rs = "1.4.0"
+reqwest = { version = "0.13.4", features = ["cookies", "multipart"] }
+soup = "0.5.1"
+tokio = { version = "1.53.1", features = ["full"] }
+serde = { version = "1.0.229", features = ["derive"] }
+humantime-serde = "1.1.1"
