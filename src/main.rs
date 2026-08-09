@@ -198,10 +198,22 @@ fn init_config() -> Result<Configuration> {
 enum FilterTerm {
     Simple(String),
     Full {
+        #[serde(deserialize_with = "deserialize_string_or_number")]
         term: String,
         #[serde(default)]
         exclude: bool,
     },
+}
+
+fn deserialize_string_or_number<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::de::Error;
+    let value = config::Value::deserialize(deserializer)?;
+    value
+        .into_string()
+        .map_err(|e| D::Error::custom(format!("could not convert to string: {}", e)))
 }
 
 #[derive(Debug, Deserialize)]
@@ -350,6 +362,8 @@ mod tests {
                 exclude: true
               - term: included_term
                 exclude: false
+              - term: 1234
+                exclude: true
             case_sensitive: true
         "#;
 
@@ -380,6 +394,14 @@ mod tests {
         match &filter.terms[2] {
             FilterTerm::Full { term, exclude } => {
                 assert_eq!(term, "included_term");
+                assert!(!exclude);
+            }
+            _ => panic!("Expected Full term"),
+        }
+
+        match &filter.terms[3] {
+            FilterTerm::Full { term, exclude } => {
+                assert_eq!(term, "2160");
                 assert!(!exclude);
             }
             _ => panic!("Expected Full term"),
