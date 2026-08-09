@@ -325,7 +325,7 @@ impl QbittorrentClient {
 
     fn append_data(&self, request_builder: RequestBuilder) -> RequestBuilder {
         request_builder
-            .header("Cookie", format!("SID={}", &self.sid))
+            .header("Cookie", format!("SID={}", self.sid))
             .header("Referer", &self.configuration.url)
     }
 
