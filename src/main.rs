@@ -44,7 +44,9 @@ async fn main() -> Result<()> {
     };
 
     loop {
-        if let Err(e) = process_directory(read_path, archive_path, &mut client, &config.filters).await {
+        if let Err(e) =
+            process_directory(read_path, archive_path, &mut client, &config.filters).await
+        {
             error!("{}", e);
         }
 
@@ -192,8 +194,19 @@ fn init_config() -> Result<Configuration> {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum FilterTerm {
+    Simple(String),
+    Full {
+        term: String,
+        #[serde(default)]
+        exclude: bool,
+    },
+}
+
+#[derive(Debug, Deserialize)]
 struct Filter {
-    terms: Vec<String>,
+    terms: Vec<FilterTerm>,
     #[serde(default)]
     case_sensitive: bool,
 }
@@ -219,12 +232,19 @@ fn extract_magnet_links(content: &str, filters: &[Filter]) -> Vec<String> {
         .filter(|li| {
             let full_text = li.text().collect::<String>();
             filters.iter().any(|filter| {
-                filter.terms.iter().all(|term| {
-                    if filter.case_sensitive {
+                filter.terms.iter().all(|term_config| {
+                    let (term, exclude) = match term_config {
+                        FilterTerm::Simple(s) => (s, false),
+                        FilterTerm::Full { term, exclude } => (term, *exclude),
+                    };
+
+                    let contains = if filter.case_sensitive {
                         full_text.contains(term)
                     } else {
                         full_text.to_lowercase().contains(&term.to_lowercase())
-                    }
+                    };
+
+                    if exclude { !contains } else { contains }
                 })
             })
         })
@@ -239,6 +259,7 @@ fn extract_magnet_links(content: &str, filters: &[Filter]) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use config::FileFormat;
 
     #[test]
     fn test_filter_logic() {
@@ -271,11 +292,17 @@ mod tests {
 
         let filters = vec![
             Filter {
-                terms: vec!["Hello".to_string(), "c376".to_string()],
+                terms: vec![
+                    FilterTerm::Simple("Hello".to_string()),
+                    FilterTerm::Simple("c376".to_string()),
+                ],
                 case_sensitive: false,
             },
             Filter {
-                terms: vec!["World".to_string(), "BO0".to_string()],
+                terms: vec![
+                    FilterTerm::Simple("World".to_string()),
+                    FilterTerm::Simple("BO0".to_string()),
+                ],
                 case_sensitive: true,
             },
         ];
@@ -287,6 +314,76 @@ mod tests {
         assert!(magnet_links.contains(&"magnet:?xt=urn:btih:2".to_string()));
         assert!(magnet_links.contains(&"magnet:?xt=urn:btih:3".to_string()));
         assert!(!magnet_links.contains(&"magnet:?xt=urn:btih:4".to_string()));
+    }
+
+    #[test]
+    fn test_filter_negation() {
+        let html = r#"
+            <li><span>Movie 2024 x264</span><a href="magnet:?1">magnet:?1</a></li>
+            <li><span>Movie 2024 x265</span><a href="magnet:?2">magnet:?2</a></li>
+            <li><span>Other 2024 x264</span><a href="magnet:?3">magnet:?3</a></li>
+        "#;
+
+        let filters = vec![Filter {
+            terms: vec![
+                FilterTerm::Simple("Movie".to_string()),
+                FilterTerm::Full {
+                    term: "x265".to_string(),
+                    exclude: true,
+                },
+            ],
+            case_sensitive: false,
+        }];
+
+        let magnet_links = extract_magnet_links(html, &filters);
+        assert_eq!(magnet_links.len(), 1);
+        assert!(magnet_links.contains(&"magnet:?1".to_string()));
+        assert!(!magnet_links.contains(&"magnet:?2".to_string()));
+    }
+
+    #[test]
+    fn test_filter_deserialization() {
+        let yaml = r#"
+            terms:
+              - simple_term
+              - term: excluded_term
+                exclude: true
+              - term: included_term
+                exclude: false
+            case_sensitive: true
+        "#;
+
+        let config = config::Config::builder()
+            .add_source(config::File::from_str(yaml, FileFormat::Yaml))
+            .build()
+            .expect("could not create config");
+        let filter: Filter = config
+            .try_deserialize()
+            .expect("could not deserialize filter");
+
+        assert_eq!(filter.terms.len(), 3);
+        assert!(filter.case_sensitive);
+
+        match &filter.terms[0] {
+            FilterTerm::Simple(s) => assert_eq!(s, "simple_term"),
+            _ => panic!("Expected Simple term"),
+        }
+
+        match &filter.terms[1] {
+            FilterTerm::Full { term, exclude } => {
+                assert_eq!(term, "excluded_term");
+                assert!(exclude);
+            }
+            _ => panic!("Expected Full term"),
+        }
+
+        match &filter.terms[2] {
+            FilterTerm::Full { term, exclude } => {
+                assert_eq!(term, "included_term");
+                assert!(!exclude);
+            }
+            _ => panic!("Expected Full term"),
+        }
     }
 }
 
