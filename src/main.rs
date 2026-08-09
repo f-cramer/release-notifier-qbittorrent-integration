@@ -1,8 +1,8 @@
 use anyhow::{Result, anyhow, bail};
 use log::{LevelFilter, debug, error, trace};
 use reqwest::{Client, RequestBuilder, Response};
+use scraper::{Html, Selector};
 use serde::Deserialize;
-use soup::{NodeExt, QueryBuilderExt, Soup};
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::time::{Duration, SystemTime};
@@ -210,18 +210,14 @@ struct Configuration {
 }
 
 fn extract_magnet_links(content: &str, filters: &[Filter]) -> Vec<String> {
-    let soup = Soup::new(content);
+    let document = Html::parse_document(content);
+    let li_selector = Selector::parse("li").unwrap();
+    let a_selector = Selector::parse("a").unwrap();
 
-    let body = match soup.tag("body").find() {
-        Some(body) => body,
-        None => return Vec::new(),
-    };
-
-    body.tag("ul")
-        .find_all()
-        .flat_map(|ul| ul.tag("li").find_all())
+    document
+        .select(&li_selector)
         .filter(|li| {
-            let full_text = li.text();
+            let full_text = li.text().collect::<String>();
             filters.iter().any(|filter| {
                 filter.terms.iter().all(|term| {
                     if filter.case_sensitive {
@@ -232,10 +228,12 @@ fn extract_magnet_links(content: &str, filters: &[Filter]) -> Vec<String> {
                 })
             })
         })
-        .flat_map(|li| li.tag("a").find_all())
-        .map(|a| a.text())
-        .filter(|text| text.starts_with("magnet:"))
-        .collect::<Vec<_>>()
+        .flat_map(|li| {
+            li.select(&a_selector)
+                .map(|a| a.text().collect::<String>())
+                .filter(|text| text.starts_with("magnet:"))
+        })
+        .collect()
 }
 
 #[cfg(test)]
