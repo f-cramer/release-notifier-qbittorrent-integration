@@ -28,11 +28,11 @@ as a `Problem` instead of returning an error, so the notification file is archiv
 Deliberately so, because repeating the whole file would download the entries that already
 succeeded a second time. See point 6 for the retry across runs.
 
-## 4. Dry run for developing filters
+## 4. Dry run for developing filters (done)
 
-A `--dry-run <file>` that reads a notification file and only prints which entries are found and
-which file names they would get, without downloading or archiving anything. Useful whenever
-`names.strip` and `names.affixes` are adjusted.
+`--dry-run <file>` prints the magnet links the filters find, the recognized video entries with
+the file name each one would get and the command that would download it. Nothing is downloaded,
+archived or sent to qBittorrent, and no directory is created.
 
 ## 5. Make the polling interval configurable
 

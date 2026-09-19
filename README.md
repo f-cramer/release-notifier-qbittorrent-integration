@@ -11,6 +11,7 @@ This tool monitors a directory for HTML files (e.g., from release notifications)
 - **Video Downloads**: For files whose name matches `videos.files`, the links are identified by their link text (see `videos.links`). YouTube links are downloaded via [yt-dlp](https://github.com/yt-dlp/yt-dlp) and m3u8 playlists via [N_m3u8DL-RE](https://github.com/nilaoda/N_m3u8DL-RE). The thumbnail is only downloaded if the video link can be handled by one of them; entries with other video links are skipped. Both are stored in the configured video directory and named after the `<h4>` heading of the entry (without a leading date `YYYY-MM-DD` or `YYYY-MM-DD - `, without everything from the first `|` on and without characters that are invalid in file names). Failed downloads are logged.
 - **Name Generation**: `videos.names` removes terms from the file name and adds prefixes and suffixes to it based on filters on the full heading, so that information behind the `|` is not lost.
 - **Email Notifications**: Problems are optionally reported by email (SMTP) instead of the log.
+- **Dry Run**: `--dry-run <file>` shows what a file would result in, without downloading or archiving anything.
 - **Archiving**: Processed files are moved to an archive directory.
 - **Cleanup**: Automatic deletion of old files from the archive after a configurable retention period.
 
@@ -99,6 +100,20 @@ If `email` is configured, problems (e.g. a video entry without a usable video li
    ```bash
    cargo run
    ```
+
+## Dry Run
+
+```bash
+release-notifier-qbittorrent-integration --dry-run "2026-09-19 - 2 new videos"
+```
+
+Reads the given file with the current `config.yml` and prints which magnet links the filters
+find, which video entries are recognized, which file name each entry would get and which
+command would download it. Nothing is downloaded, archived or sent to qBittorrent, and no
+directory is created — useful for developing `filters`, `videos.links` and `videos.names`.
+
+The `videos.files` filter is reported but not obeyed, so that the entries of a renamed or
+copied file can be checked as well.
 
 ## Development
 

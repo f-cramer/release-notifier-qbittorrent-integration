@@ -36,6 +36,10 @@ async fn main() -> Result<()> {
 
     debug!("{:?}", config);
 
+    if let Some(path) = dry_run_path(std::env::args().skip(1))? {
+        return dry_run(&path, &config).await;
+    }
+
     let notifier = Notifier::new(config.email.as_ref())?;
 
     // Child processes like N_m3u8DL-RE inherit the limit and may open many segment files at once.
@@ -125,6 +129,130 @@ async fn main() -> Result<()> {
 
         sleep(Duration::from_mins(1)).await;
     }
+}
+
+/// Returns the file of a "--dry-run <file>" invocation.
+fn dry_run_path<I>(arguments: I) -> Result<Option<PathBuf>>
+where
+    I: IntoIterator<Item = String>,
+{
+    let mut arguments = arguments.into_iter();
+    let Some(argument) = arguments.next() else {
+        return Ok(None);
+    };
+    if argument != "--dry-run" {
+        bail!(
+            "unknown argument '{}', expected: --dry-run <file>",
+            argument
+        );
+    }
+
+    let path = arguments
+        .next()
+        .ok_or_else(|| anyhow!("--dry-run needs the file to read"))?;
+    if let Some(argument) = arguments.next() {
+        bail!("unexpected argument '{}' after the file", argument);
+    }
+
+    Ok(Some(PathBuf::from(path)))
+}
+
+/// Prints what the file would result in, without downloading or archiving anything.
+async fn dry_run(path: &Path, config: &Configuration) -> Result<()> {
+    let content = read_to_string(path)
+        .await
+        .with_context(|| format!("could not read {}", path.display()))?;
+    let file_name = path
+        .file_name()
+        .ok_or_else(|| anyhow!("No file name found in {}", path.display()))?;
+
+    println!(
+        "{}",
+        dry_run_report(&content, &file_name.to_string_lossy(), config)
+    );
+    Ok(())
+}
+
+/// Describes the entries of the file and what they would be named, for developing the filters.
+fn dry_run_report(content: &str, file_name: &str, config: &Configuration) -> String {
+    let mut lines = vec![format!("file: {}", file_name)];
+
+    let magnet_links = extract_magnet_links(content, &config.filters);
+    lines.push(format!(
+        "
+magnet links: {}",
+        magnet_links.len()
+    ));
+    lines.extend(magnet_links.iter().map(|link| format!("  {}", link)));
+
+    let Some(videos) = &config.videos else {
+        lines.push(
+            "
+no video configuration"
+                .to_string(),
+        );
+        return lines.join(
+            "
+",
+        );
+    };
+
+    if !videos.files.iter().any(|filter| filter.matches(file_name)) {
+        // Shown but not obeyed, so that the entries of a renamed or copied file can be checked.
+        lines.push(
+            "
+the file name does not match videos.files, a real run would skip it"
+                .to_string(),
+        );
+    }
+
+    let entries = extract_videos(content, &videos.links);
+    lines.push(format!(
+        "
+video entries: {}",
+        entries.len()
+    ));
+    for entry in entries {
+        let name = file_name_from_title(&entry.title, &videos.names);
+        lines.push(format!(
+            "
+  title:     {}",
+            entry.title
+        ));
+        lines.push(match name.is_empty() {
+            true => "  name:      <none, the entry would be reported as a problem>".to_string(),
+            false => format!("  name:      {}", name),
+        });
+        lines.push(match &entry.thumbnail_url {
+            Some(url) => format!("  thumbnail: {}", url),
+            None => "  thumbnail: <none>".to_string(),
+        });
+        match &entry.video_url {
+            Some(url) => {
+                lines.push(format!("  video:     {}", url));
+                lines.push(match videos.downloaders.command(url, &videos.path, &name) {
+                    Some((executable, arguments)) => {
+                        // Quoted, so that an argument containing spaces stays recognizable as one.
+                        let arguments: Vec<String> = arguments
+                            .iter()
+                            .map(|argument| match argument.contains(' ') {
+                                true => format!("\"{}\"", argument),
+                                false => argument.clone(),
+                            })
+                            .collect();
+                        format!("  command:   {} {}", executable, arguments.join(" "))
+                    }
+                    None => "  command:   <no downloader handles this link>".to_string(),
+                });
+            }
+            None => lines.push("  video:     <none>".to_string()),
+        }
+    }
+
+    lines.join(
+        "
+",
+    )
 }
 
 async fn process_directory(
@@ -1196,6 +1324,105 @@ mod tests {
         assert!(archive.join("a.html").is_file() && archive.join("c.html").is_file());
 
         tokio::fs::remove_dir_all(&base).await.unwrap();
+    }
+
+    #[test]
+    fn test_dry_run_path() {
+        let path = |arguments: &[&str]| {
+            dry_run_path(arguments.iter().map(|a| a.to_string()).collect::<Vec<_>>())
+        };
+
+        assert_eq!(path(&[]).unwrap(), None);
+        assert_eq!(
+            path(&["--dry-run", "a file"]).unwrap(),
+            Some(PathBuf::from("a file"))
+        );
+        assert!(path(&["--dry-run"]).is_err());
+        assert!(path(&["--dry-run", "a file", "another"]).is_err());
+        assert!(path(&["file"]).is_err());
+    }
+
+    #[test]
+    fn test_dry_run_report() {
+        let yaml = r#"
+            path: /notifications
+            archive:
+              path: /archive
+            qbittorrent:
+              url: http://localhost:8080/
+              username: admin
+              password: secret
+            videos:
+              path: /videos
+              files:
+                - terms: ["TabletopTactics"]
+              links:
+                thumbnail:
+                  - terms: ["Thumbnail"]
+                video:
+                  - terms: ["Video"]
+              names:
+                strip: ["**NEW CODEX!!**"]
+                affixes:
+                  - terms: ["Codex Review"]
+                    prefix: "Codex Review - "
+        "#;
+        let config: Configuration = config::Config::builder()
+            .add_source(config::File::from_str(yaml, FileFormat::Yaml))
+            .build()
+            .expect("could not create config")
+            .try_deserialize()
+            .expect("could not deserialize configuration");
+
+        let html = r#"
+            <html><body>
+              <div>
+                <h4>2026-09-19 - Space Marines | Warhammer 40k Codex Review</h4>
+                <ul>
+                  <li><a href="https://example.com/thumb.jpg">Thumbnail</a></li>
+                  <li><a href="https://content.uplynk.com/abc.m3u8">Video</a></li>
+                </ul>
+              </div>
+              <div>
+                <h4>2026-09-19 - **NEW CODEX!!** Space Marines vs Orks | Warhammer 40k Battle Report</h4>
+                <ul>
+                  <li><a href="https://www.youtube.com/embed/u9d7RlroH1w">Video</a></li>
+                </ul>
+              </div>
+            </body></html>
+        "#;
+
+        let report = dry_run_report(html, "1 new video from TabletopTactics", &config);
+
+        assert!(
+            report.contains("name:      Codex Review - Space Marines"),
+            "{}",
+            report
+        );
+        assert!(
+            report.contains("name:      Space Marines vs Orks"),
+            "{}",
+            report
+        );
+        assert!(report.contains("thumbnail: <none>"), "{}", report);
+        assert!(
+            report.contains(r#"--save-name "Codex Review - Space Marines""#),
+            "{}",
+            report
+        );
+        assert!(report.contains("N_m3u8DL-RE"), "{}", report);
+        assert!(report.contains("yt-dlp"), "{}", report);
+        assert!(report.contains("video entries: 2"), "{}", report);
+        assert!(
+            !report.contains("does not match videos.files"),
+            "{}",
+            report
+        );
+
+        // A file name the real run would skip is still reported, with a note.
+        let report = dry_run_report(html, "1 new video from OtherChannel", &config);
+        assert!(report.contains("does not match videos.files"), "{}", report);
+        assert!(report.contains("video entries: 2"), "{}", report);
     }
 
     #[test]
