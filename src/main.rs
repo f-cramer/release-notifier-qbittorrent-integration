@@ -119,13 +119,29 @@ async fn process_directory(
     notifier: &Notifier,
 ) -> Result<()> {
     let mut entries = read_dir(directory).await?;
-    while let Ok(Some(entry)) = entries.next_entry().await {
+    let mut problems = Vec::new();
+    loop {
+        // A file that cannot be processed stays where it is and does not stop the run, so that
+        // the remaining files still get their chance and the next run retries the failed one.
+        let entry = match entries.next_entry().await {
+            Ok(Some(entry)) => entry,
+            Ok(None) => break,
+            Err(e) => {
+                problems.push(Problem::error(format!(
+                    "could not read the entries of {}: {}",
+                    directory.display(),
+                    e
+                )));
+                break;
+            }
+        };
+
         let path = entry.path();
         if !path.is_file() {
             continue;
         }
 
-        process_file(
+        if let Err(e) = process_file(
             &path,
             archive_directory,
             client,
@@ -134,8 +150,19 @@ async fn process_directory(
             videos,
             notifier,
         )
-        .await?;
+        .await
+        {
+            problems.push(Problem::error(format!(
+                "could not process {}: {:#}",
+                path.display(),
+                e
+            )));
+        }
     }
+
+    notifier
+        .report(&format!("Problems in {}", directory.display()), &problems)
+        .await;
 
     Ok(())
 }
@@ -1068,6 +1095,66 @@ mod tests {
         );
         // The affixes are dropped along with an empty name.
         assert_eq!(file_name("2026-09-19 - | Warhammer 40k Codex Review"), "");
+    }
+
+    #[tokio::test]
+    async fn test_process_directory_continues_after_a_failing_file() {
+        let base = std::env::temp_dir().join(format!(
+            "release-notifier-test-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let directory = base.join("notifications");
+        let archive = base.join("archive");
+        create_dir_all(&directory).await.unwrap();
+        create_dir_all(&archive).await.unwrap();
+
+        for name in ["a.html", "b.html", "c.html"] {
+            write(directory.join(name), "<html></html>").await.unwrap();
+        }
+        // Archiving b.html fails because a non-empty directory of that name is in the way.
+        create_dir_all(archive.join("b.html").join("blocker"))
+            .await
+            .unwrap();
+
+        let mut client = QbittorrentClient {
+            client: Client::new(),
+            sid: String::new(),
+            configuration: QbittorrentConfiguration {
+                url: "http://localhost:1/".to_string(),
+                username: String::new(),
+                password: String::new(),
+            },
+        };
+
+        // Without filters no magnet link is found and without a video configuration no download
+        // is started, so the run does not talk to anything.
+        process_directory(
+            &directory,
+            &archive,
+            &mut client,
+            &[],
+            &Client::new(),
+            None,
+            &Notifier::new(None).unwrap(),
+        )
+        .await
+        .expect("the run itself must not fail");
+
+        assert!(
+            directory.join("b.html").is_file(),
+            "the failing file stays where it is"
+        );
+        assert!(
+            !directory.join("a.html").exists() && !directory.join("c.html").exists(),
+            "the files before and after it are processed"
+        );
+        assert!(archive.join("a.html").is_file() && archive.join("c.html").is_file());
+
+        tokio::fs::remove_dir_all(&base).await.unwrap();
     }
 
     #[test]
