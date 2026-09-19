@@ -64,6 +64,8 @@ videos:                        # optional
       arguments: ["--merge-output-format", "mp4"]  # default: none
       hosts: ["youtube.com", "youtu.be", "youtube-nocookie.com"]  # default, subdomains included
       update_interval: 1d      # optional, runs "yt-dlp --update" at startup and then after each interval (default: no updates)
+    retries: 2                 # default, additional attempts if a video download fails
+    retry_delay: 30s           # default, waited before each additional attempt
 
 email:                         # optional, without it problems are only logged
   host: smtp.example.com       # SMTP server
@@ -77,6 +79,8 @@ email:                         # optional, without it problems are only logged
 The file name of an entry is built in this order: the leading date and everything from the first `|` on are removed from the `<h4>` heading, then every term of `names.strip` is removed from the rest, and finally the affixes of all `names.affixes` whose filter matches the **full** heading are added — the prefixes in front and the suffixes behind, both in the order of the configuration and without a separator, so that the separator is part of the configured value. Characters that are invalid in file names are removed at the end. If nothing is left of the heading itself, the entry is reported as a problem and the affixes are dropped with it.
 
 With the configuration above, `2026-09-19 - Space Marines | Warhammer 40k Codex Review` becomes `Space Marines - Codex Review` and `2026-09-19 - **NEW CODEX!!** Space Marines vs Orks | Warhammer 40k Battle Report` becomes `Batrep - Space Marines vs Orks`.
+
+A failed video download is repeated `downloaders.retries` times, with `downloaders.retry_delay` between the attempts, which covers temporary failures like a network hiccup or throttling. This applies to the video download only, not to the thumbnail and not to the update of yt-dlp. A download that still fails afterwards is reported as a problem; the notification file is archived either way, so it is not retried in a later run.
 
 N_m3u8DL-RE is always called with `--save-dir`, `--save-name` and `--auto-select`.
 

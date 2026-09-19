@@ -17,12 +17,16 @@ The main loop reports a run that failed and a failed cleanup of the archive thro
 `Notifier` instead of only logging them. The only remaining `error!` is the fallback of the
 `Notifier` itself, which cannot report that it could not report.
 
-## 3. Retry failed downloads
+## 3. Retry failed downloads (done)
 
-yt-dlp fails temporarily every now and then (network, throttling). Currently there is one
-attempt, the problem is reported and the notification file is archived, so the download is lost
-and the file has to be copied back by hand. Add one or two retries with a delay, or a `failed/`
-directory that is picked up by the next run.
+A failed video download is repeated `downloaders.retries` times with `downloaders.retry_delay`
+in between, which covers temporary failures like a network hiccup or throttling. Only the video
+download is repeated, not the thumbnail and not the update of yt-dlp.
+
+Note that the retries of point 1 do not apply here: `process_videos` collects a failed download
+as a `Problem` instead of returning an error, so the notification file is archived either way.
+Deliberately so, because repeating the whole file would download the entries that already
+succeeded a second time. See point 7 for the retry across runs.
 
 ## 4. Dry run for developing filters
 
@@ -40,3 +44,12 @@ each other. Skip with a note, or add a counter suffix.
 
 The one minute in the main loop is the only value that is hard coded while everything else comes
 from the configuration.
+
+## 7. Retry a failed download in a later run
+
+The retries of point 3 all happen within a few minutes. A download that fails because the
+source is temporarily unavailable needs a longer break — a new attempt a few minutes or hours
+later, across runs. Needs state beyond a single run: which entry of which notification file
+still has to be downloaded, and since when. A `failed/` directory holding a notification file
+reduced to the missing entries would keep that state in the file system instead of in a
+database, and would be picked up by a run once it is old enough.

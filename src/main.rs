@@ -2,7 +2,7 @@ use anyhow::{Context, Result, anyhow, bail};
 use lettre::message::Mailbox;
 use lettre::transport::smtp::authentication::Credentials;
 use lettre::{AsyncSmtpTransport, AsyncTransport, Message, Tokio1Executor};
-use log::{Level, LevelFilter, debug, error, info, log, trace};
+use log::{Level, LevelFilter, debug, error, info, log, trace, warn};
 use reqwest::header::CONTENT_TYPE;
 use reqwest::{Client, RequestBuilder, Response, Url};
 use scraper::{ElementRef, Html, Selector};
@@ -308,7 +308,7 @@ async fn process_videos(
             "downloading {} as '{}' with {}",
             video_url, name, executable
         );
-        if let Err(e) = run_command(executable, &arguments).await {
+        if let Err(e) = run_download(executable, &arguments, &config.downloaders).await {
             problems.push(Problem::error(format!(
                 "could not download video {} for '{}': {:#}",
                 video_url, entry.title, e
@@ -368,6 +368,29 @@ async fn update_youtube_downloader(
                 .await
         }
     }
+}
+
+/// Runs the download and repeats it after the configured delay if it fails.
+async fn run_download(
+    executable: &str,
+    arguments: &[String],
+    downloaders: &Downloaders,
+) -> Result<String> {
+    for attempt in 1..=downloaders.retries {
+        match run_command(executable, arguments).await {
+            Ok(output) => return Ok(output),
+            Err(e) => warn!(
+                "attempt {} of {} failed, retrying in {:?}: {:#}",
+                attempt,
+                downloaders.retries + 1,
+                downloaders.retry_delay,
+                e
+            ),
+        }
+        sleep(downloaders.retry_delay).await;
+    }
+
+    run_command(executable, arguments).await
 }
 
 /// Runs the command and returns its standard output.
@@ -1248,6 +1271,8 @@ mod tests {
         assert!(videos.downloaders.youtube.arguments.is_empty());
         assert_eq!(videos.downloaders.youtube.hosts.len(), 3);
         assert_eq!(videos.downloaders.youtube.update_interval, None);
+        assert_eq!(videos.downloaders.retries, 2);
+        assert_eq!(videos.downloaders.retry_delay, Duration::from_secs(30));
         assert!(videos.names.strip.is_empty());
         assert!(videos.names.affixes.is_empty());
     }
@@ -1303,6 +1328,8 @@ mod tests {
                 executable: /usr/local/bin/yt-dlp
                 hosts: ["example.com"]
                 update_interval: 1d
+              retries: 0
+              retry_delay: 5m
         "#;
 
         let config = config::Config::builder()
@@ -1322,6 +1349,45 @@ mod tests {
         assert_eq!(
             downloaders.youtube.update_interval,
             Some(Duration::from_hours(24))
+        );
+        assert_eq!(downloaders.retries, 0);
+        assert_eq!(downloaders.retry_delay, Duration::from_mins(5));
+    }
+
+    #[tokio::test]
+    async fn test_run_download_retries() {
+        let downloaders = Downloaders {
+            retries: 2,
+            retry_delay: Duration::from_millis(50),
+            ..Downloaders::default()
+        };
+
+        let start = Instant::now();
+        let result = run_download("no-such-executable-3e7f1a", &[], &downloaders).await;
+
+        assert!(result.is_err());
+        assert!(
+            start.elapsed() >= Duration::from_millis(100),
+            "three attempts wait twice, but only took {:?}",
+            start.elapsed()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_run_download_without_retries() {
+        let downloaders = Downloaders {
+            retries: 0,
+            retry_delay: Duration::from_secs(60),
+            ..Downloaders::default()
+        };
+
+        let start = Instant::now();
+        let result = run_download("no-such-executable-3e7f1a", &[], &downloaders).await;
+
+        assert!(result.is_err());
+        assert!(
+            start.elapsed() < Duration::from_secs(60),
+            "a single attempt does not wait"
         );
     }
 
@@ -1563,11 +1629,27 @@ struct LinkFilters {
     video: Vec<Filter>,
 }
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Deserialize)]
 #[serde(default)]
 struct Downloaders {
     hls: HlsDownloader,
     youtube: YoutubeDownloader,
+    /// Number of additional attempts if a download fails.
+    retries: u32,
+    /// Waited before each additional attempt.
+    #[serde(with = "humantime_serde")]
+    retry_delay: Duration,
+}
+
+impl Default for Downloaders {
+    fn default() -> Self {
+        Self {
+            hls: HlsDownloader::default(),
+            youtube: YoutubeDownloader::default(),
+            retries: 2,
+            retry_delay: Duration::from_secs(30),
+        }
+    }
 }
 
 impl Downloaders {
