@@ -26,7 +26,7 @@ download is repeated, not the thumbnail and not the update of yt-dlp.
 Note that the retries of point 1 do not apply here: `process_videos` collects a failed download
 as a `Problem` instead of returning an error, so the notification file is archived either way.
 Deliberately so, because repeating the whole file would download the entries that already
-succeeded a second time. See point 7 for the retry across runs.
+succeeded a second time. See point 6 for the retry across runs.
 
 ## 4. Dry run for developing filters
 
@@ -34,18 +34,12 @@ A `--dry-run <file>` that reads a notification file and only prints which entrie
 which file names they would get, without downloading or archiving anything. Useful whenever
 `names.strip` and `names.affixes` are adjusted.
 
-## 5. Do not overwrite existing files silently
-
-`download_image` writes unconditionally, and the downloaders overwrite as well. If the same
-notification arrives twice, or two entries end up with the same generated name, they overwrite
-each other. Skip with a note, or add a counter suffix.
-
-## 6. Make the polling interval configurable
+## 5. Make the polling interval configurable
 
 The one minute in the main loop is the only value that is hard coded while everything else comes
 from the configuration.
 
-## 7. Retry a failed download in a later run
+## 6. Retry a failed download in a later run
 
 The retries of point 3 all happen within a few minutes. A download that fails because the
 source is temporarily unavailable needs a longer break — a new attempt a few minutes or hours
