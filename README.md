@@ -4,7 +4,7 @@ This tool monitors a directory for HTML files (e.g., from release notifications)
 
 ## Features
 
-- **Directory Monitoring**: Monitors a folder for new files.
+- **Directory Monitoring**: Monitors a folder for new files, every `interval`.
 - **HTML Parsing**: Uses `scraper` (based on `html5ever`) to extract magnet links from `<li>` elements.
 - **Flexible Filters**: Filtering by multiple terms (AND-linked within a filter) with optional case sensitivity.
 - **qBittorrent Integration**: Automatic login and adding of torrents via the Web API.
@@ -21,6 +21,7 @@ Create a `config.yml` in the project directory:
 
 ```yaml
 path: /home/user/notifier    # Directory containing the files to process
+interval: 1m                 # optional, waited between two runs (default: 1m)
 archive:
   path: /home/user/archive   # Directory for processed files
   retentionPeriod: 7d          # Retention period (e.g., 7d, 24h)

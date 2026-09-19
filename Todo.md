@@ -34,10 +34,10 @@ succeeded a second time. See point 6 for the retry across runs.
 the file name each one would get and the command that would download it. Nothing is downloaded,
 archived or sent to qBittorrent, and no directory is created.
 
-## 5. Make the polling interval configurable
+## 5. Make the polling interval configurable (done)
 
-The one minute in the main loop is the only value that is hard coded while everything else comes
-from the configuration.
+The top level `interval` sets what is waited between two runs, defaulting to the one minute that
+used to be hard coded.
 
 ## 6. Retry a failed download in a later run
 

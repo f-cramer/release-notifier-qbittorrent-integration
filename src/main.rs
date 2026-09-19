@@ -127,7 +127,7 @@ async fn main() -> Result<()> {
                 .await;
         }
 
-        sleep(Duration::from_mins(1)).await;
+        sleep(config.interval).await;
     }
 }
 
@@ -676,9 +676,16 @@ impl Filter {
     }
 }
 
+fn default_interval() -> Duration {
+    Duration::from_mins(1)
+}
+
 #[derive(Debug, Deserialize)]
 struct Configuration {
     path: String,
+    /// Waited between two runs.
+    #[serde(with = "humantime_serde", default = "default_interval")]
+    interval: Duration,
     archive: ArchiveConfiguration,
     qbittorrent: QbittorrentConfiguration,
     #[serde(default)]
@@ -1423,6 +1430,44 @@ mod tests {
         let report = dry_run_report(html, "1 new video from OtherChannel", &config);
         assert!(report.contains("does not match videos.files"), "{}", report);
         assert!(report.contains("video entries: 2"), "{}", report);
+    }
+
+    #[test]
+    fn test_interval_deserialization() {
+        let configuration = |yaml: &str| {
+            config::Config::builder()
+                .add_source(config::File::from_str(yaml, FileFormat::Yaml))
+                .build()
+                .expect("could not create config")
+                .try_deserialize::<Configuration>()
+                .expect("could not deserialize configuration")
+        };
+        let base = r#"
+            path: /notifications
+            archive:
+              path: /archive
+            qbittorrent:
+              url: http://localhost:8080/
+              username: admin
+              password: secret
+        "#;
+
+        let with_interval = r#"
+            path: /notifications
+            interval: 15m
+            archive:
+              path: /archive
+            qbittorrent:
+              url: http://localhost:8080/
+              username: admin
+              password: secret
+        "#;
+
+        assert_eq!(configuration(base).interval, Duration::from_mins(1));
+        assert_eq!(
+            configuration(with_interval).interval,
+            Duration::from_mins(15)
+        );
     }
 
     #[test]
