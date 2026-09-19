@@ -1,49 +1,58 @@
 # Todo
 
-Ideas for further improvements, roughly in the order in which they seem worth doing.
+Ideas for further improvements.
 
-## 1. Do not let one broken file block the whole run (done)
+## 1. Retry a failed download in a later run
 
-`process_directory` collects the error of each file, reports the errors of the run together and
-continues with the next file. A file that cannot be processed stays where it is and is retried
-by the next run.
+The retries of `downloaders.retries` all happen within a few minutes and block the run while
+they wait. A download that fails because the source is unavailable for longer needs a new
+attempt across runs, half an hour or a few hours later.
 
-Open: a file that keeps failing is reported again on every run. If that turns out to be
-annoying, remember the already reported failures or move them aside after a few attempts.
+Before building it: raising `downloaders.retries` and `downloaders.retry_delay` (e.g. five
+attempts ten minutes apart) covers almost an hour without any new code. The price is that the
+run is blocked for that time, so no notification file is processed and no torrent is handed to
+qBittorrent, and that a restart loses everything. Only worth the rebuild if that hurts.
 
-## 2. Report errors outside the video handling (done)
+### Plan
 
-The main loop reports a run that failed and a failed cleanup of the archive through the
-`Notifier` instead of only logging them. The only remaining `error!` is the fallback of the
-`Notifier` itself, which cannot report that it could not report.
+A `retry/` directory holding a reduced notification file. When the download of an entry fails
+for good, write a new HTML file containing only the `<div>` containers of the failed entries,
+serialized straight from the original with `ElementRef::html()` — no own format and no
+serialization code. The next run treats `retry/` like the input directory, but only for files
+whose modification time is older than `retry.after`.
 
-## 3. Retry failed downloads (done)
+The state then lives in the file system instead of a database: the timestamp is the
+modification time, the format is the one of the input directory, the existing parsing and
+downloading is reused unchanged, and it can be corrected by hand — deleting a file gives up,
+touching it retries right away.
 
-A failed video download is repeated `downloaders.retries` times with `downloaders.retry_delay`
-in between, which covers temporary failures like a network hiccup or throttling. Only the video
-download is repeated, not the thumbnail and not the update of yt-dlp.
+```yaml
+videos:
+  retry:
+    path: /home/user/retry
+    after: 30m       # minimum age before a new attempt
+    attempts: 5      # give up afterwards
+```
 
-Note that the retries of point 1 do not apply here: `process_videos` collects a failed download
-as a `Problem` instead of returning an error, so the notification file is archived either way.
-Deliberately so, because repeating the whole file would download the entries that already
-succeeded a second time. See point 6 for the retry across runs.
+### Decisions it needs
 
-## 4. Dry run for developing filters (done)
+- **The attempt counter** has to go into the file, otherwise entries for permanently dead
+  sources pile up. As an attribute on the `<body>` (`<body data-attempt="3">`) it stays inside
+  the file and does not disturb the parsing.
+- **When to report.** A failed download with attempts left only goes to the log, only the last
+  attempt creates a `Problem` and with it the email. Otherwise every run sends one.
+- **Magnet links must not be added again** on a retry. With the current files that happens to
+  be harmless, because the video links do not start with `magnet:`, but the retry path should
+  be limited to the video handling explicitly instead of relying on that.
+- **Thumbnail and video are not tracked separately.** Only the video download is repeated; if
+  just the thumbnail fails it stays a reported problem. Anything else means tracking which part
+  of an entry is still missing, which costs more than it is worth.
+- **What does not work here:** copying the original file and skipping every entry whose target
+  file already exists. The target directory is cleaned up regularly, so an already downloaded
+  file would be gone and would be downloaded again.
 
-`--dry-run <file>` prints the magnet links the filters find, the recognized video entries with
-the file name each one would get and the command that would download it. Nothing is downloaded,
-archived or sent to qBittorrent, and no directory is created.
+### Effort
 
-## 5. Make the polling interval configurable (done)
-
-The top level `interval` sets what is waited between two runs, defaulting to the one minute that
-used to be hard coded.
-
-## 6. Retry a failed download in a later run
-
-The retries of point 3 all happen within a few minutes. A download that fails because the
-source is temporarily unavailable needs a longer break — a new attempt a few minutes or hours
-later, across runs. Needs state beyond a single run: which entry of which notification file
-still has to be downloaded, and since when. A `failed/` directory holding a notification file
-reduced to the missing entries would keep that state in the file system instead of in a
-database, and would be picked up by a run once it is old enough.
+Roughly 150 to 200 lines plus tests. The manageable part is writing and reading the `retry/`
+directory. The fiddly part is that `process_videos` has to tell "failed, can be repeated" from
+"failed for good" (no downloader for the link, no usable name) and treat them differently.
