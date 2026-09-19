@@ -11,11 +11,11 @@ by the next run.
 Open: a file that keeps failing is reported again on every run. If that turns out to be
 annoying, remember the already reported failures or move them aside after a few attempts.
 
-## 2. Report errors outside the video handling
+## 2. Report errors outside the video handling (done)
 
-The two `error!("{}", e)` calls in the main loop bypass the `Notifier`, so exactly the problems
-an email would be most useful for — qBittorrent unreachable, archive directory not writable —
-stay silent. Route them through the `Notifier` like the video problems.
+The main loop reports a run that failed and a failed cleanup of the archive through the
+`Notifier` instead of only logging them. The only remaining `error!` is the fallback of the
+`Notifier` itself, which cannot report that it could not report.
 
 ## 3. Retry failed downloads
 

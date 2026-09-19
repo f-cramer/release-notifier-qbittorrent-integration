@@ -82,7 +82,7 @@ N_m3u8DL-RE is always called with `--save-dir`, `--save-name` and `--auto-select
 
 yt-dlp is always called with `--no-playlist`, `--no-progress`, `--paths` and `--output`. It needs [ffmpeg](https://ffmpeg.org/) to merge video and audio. Members-only videos or a "Sign in to confirm you're not a bot" error require cookies (e.g. `arguments: ["--cookies", "/path/to/cookies.txt"]`). Keep yt-dlp up to date, as YouTube changes frequently, e.g. with `update_interval`. The update runs between two processing runs, never during a download, and a failed update is reported like other problems. `--update` only works for the standalone binaries from the yt-dlp releases; if yt-dlp was installed via pip or a package manager, update it there instead.
 
-If `email` is configured, problems (e.g. a video entry without a usable video link or a failed download) are sent by email instead of being logged; problems of one notification file are combined into one email. If sending fails, the error and the problems are logged.
+If `email` is configured, problems (e.g. a video entry without a usable video link, a failed download, a file that could not be processed or an unreachable qBittorrent) are sent by email instead of being logged; the problems of one notification file are combined into one email, as are the files of one run that could not be processed. If sending fails, the error and the problems are logged.
 
 ## Installation & Execution
 

@@ -96,13 +96,31 @@ async fn main() -> Result<()> {
         )
         .await
         {
-            error!("{}", e);
+            notifier
+                .report(
+                    &format!("Could not process {}", read_path.display()),
+                    &[Problem::error(format!(
+                        "could not process {}: {:#}",
+                        read_path.display(),
+                        e
+                    ))],
+                )
+                .await;
         }
 
         if let Some(retention_period) = config.archive.retention_period
             && let Err(e) = delete_old_files(archive_path, retention_period).await
         {
-            error!("{}", e);
+            notifier
+                .report(
+                    &format!("Could not clean up {}", archive_path.display()),
+                    &[Problem::error(format!(
+                        "could not delete old files in {}: {:#}",
+                        archive_path.display(),
+                        e
+                    ))],
+                )
+                .await;
         }
 
         sleep(Duration::from_mins(1)).await;
